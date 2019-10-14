@@ -1,0 +1,14 @@
+[package]
+name = "mixed-tag-serde"
+version = "0.1.0"
+authors = ["Waffle <wafflewafflerov@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# NOTE: unfortunately, I can't find a way to enable derive only for tests :(
+serde = { version = "1.0.101", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0.41"
