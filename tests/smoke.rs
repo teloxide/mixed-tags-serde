@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[mixed_tags_serde::mixed_tags]
+#[mixed_tag_serde::mixed_tags]
 #[derive(Serialize)]
 enum MyEnum {
     One(i32),
