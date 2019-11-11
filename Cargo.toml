@@ -1,5 +1,5 @@
 [package]
-name = "mixed-tag-serde"
+name = "mixed-tags-serde"
 version = "0.1.0"
 authors = ["Waffle <wafflelapkin@gmail.com>", "Andrey Vlasov <andrassy_anderson@protonmail.com>"]
 edition = "2018"
