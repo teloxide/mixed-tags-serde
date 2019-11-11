@@ -37,11 +37,9 @@ where
             })?;
 
 
-        let (tag, value) = entry;
-        if tag == self.tag {
-            Ok(value)
-        } else {
-            Err(A::Error::custom(format!(r#"key "{tag}""#, tag = self.tag)))
+        match entry {
+            (tag, value) if tag == self.tag => Ok(value),
+            _ => Err(A::Error::custom(format!(r#"key "{tag}""#, tag = self.tag))),
         }
     }
 }
