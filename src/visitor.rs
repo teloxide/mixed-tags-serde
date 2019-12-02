@@ -26,7 +26,7 @@ where
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
         let entry = map
             .next_entry::<&'de str, T>()?
-            .ok_or_else(||{
+            .ok_or_else(|| {
                 let ty = std::any::type_name::<T>();
                 let message = format!(
                     r#"pair of key "{tag}" and value of type {T}"#, // TODO: better message?
