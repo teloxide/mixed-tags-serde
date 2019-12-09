@@ -10,8 +10,11 @@ enum MyEnum {
     #[tagged]
     Two(u32),
 
-    #[tagged]
-    Three { x: i32, y: i32 },
+    // #[tagged]
+    Three {
+        x: i32,
+        y: i32,
+    },
 }
 
 #[test]

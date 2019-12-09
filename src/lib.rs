@@ -9,7 +9,7 @@ use proc_macro2;
 #[proc_macro_attribute]
 pub fn mixed_tags(_attrs: TokenStream, item: TokenStream) -> TokenStream {
     let mut item = parse_macro_input!(item as ItemEnum);
-    let mut result = proc_macro2::TokenStream::new();
+    let mut result = Vec::<proc_macro2::TokenStream>::new();
     let enum_ident = item.ident.to_string();
 
     let tagged_filter = |attr: &syn::Attribute|
@@ -32,22 +32,24 @@ pub fn mixed_tags(_attrs: TokenStream, item: TokenStream) -> TokenStream {
         let unnamed = match var.fields {
             syn::Fields::Unnamed(ref u) => u,
             _ => {
-                result.extend(
-                    [proc_macro2::TokenStream::from(quote! {
+                result.push(
+                    quote! {
                         compile_error!("Need NewType(Type) variant");
-                    })]
-                    .iter()
-                    .cloned(),
+                    }
+                    .into(),
                 );
                 continue;
             }
         };
         let first_field = match unnamed.unnamed.first() {
             None => {
-                return quote! {
-                    compile_error!("Need NewType(Type) variant")
-                }
-                .into()
+                result.push(
+                    quote! {
+                        compile_error!("Need NewType(Type) variant");
+                    }
+                    .into(),
+                );
+                continue;
             }
             Some(field) => field,
         };
@@ -91,7 +93,7 @@ pub fn mixed_tags(_attrs: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let mut stream = item.into_token_stream();
-    stream.extend([result].iter().cloned());
+    stream.extend(result.iter().cloned());
     // eprintln!("{}", stream);
     stream.into()
 }
