@@ -1,135 +1,99 @@
-mod visitor;
+extern crate proc_macro;
 
-use std::slice;
+use quote::{format_ident, quote, ToTokens};
+use syn::{parse_macro_input, parse_quote, ItemEnum};
 
-use serde::{
-    Deserialize, Serialize,
-    ser::{Serializer, SerializeStruct},
-    de::Deserializer,
-};
+use proc_macro::TokenStream;
+use proc_macro2;
 
-use visitor::TaggedVisitor;
+#[proc_macro_attribute]
+pub fn mixed_tags(_attrs: TokenStream, item: TokenStream) -> TokenStream {
+    let mut item = parse_macro_input!(item as ItemEnum);
+    let mut result = Vec::<proc_macro2::TokenStream>::new();
+    let enum_ident = item.ident.to_string();
 
-pub fn tagged_de<'de, T, D>(des: D, ty: &'static str, tag: &'static &'static str) -> Result<T, D::Error>
-where
-    T: Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    des.deserialize_struct(ty, slice::from_ref(&tag), TaggedVisitor::new(tag))
-}
-
-pub fn tagged_ser<T, S>(val: &T, ser: S, ty: &'static str, tag: &'static str) -> Result<S::Ok, S::Error>
-where
-    T: Serialize,
-    S: Serializer,
-{
-    let mut sv = ser.serialize_struct(ty, 1)?;
-    sv.serialize_field(tag, val)?;
-    sv.end()
-}
-
-#[cfg(test)]
-mod tests {
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Debug, PartialEq, Deserialize, Serialize)]
-    #[serde(untagged)]
-    enum Enum {
-        #[serde(with = "tagged_i32")]
-        TaggedI32(i32),
-        #[serde(with = "tagged_string")]
-        TaggedString(String),
-        Untagged {
-            x: i32,
-            y: i32
+    let tagged_filter = |attr: &syn::Attribute|
+        /*attr.style == syn::AttrStyle::Outer &&*/
+        attr.path.segments.len() == 1
+        && attr.path.segments
+                .first().unwrap()
+                .ident.to_string()
+            == "tagged";
+    for var in item.variants.iter_mut() {
+        if !var.attrs.iter().any(tagged_filter) {
+            continue;
         }
-    }
+        var.attrs.retain(|attr| !tagged_filter(attr));
+        let field_ident = var.ident.to_string();
+        let ser_func = format_ident!("mixed_tags_ser_{}", field_ident);
+        let ser_func_str = format!("mixed_tags_ser_{}", field_ident);
+        let de_func = format_ident!("mixed_tags_de_{}", field_ident);
+        let de_func_str = format!("mixed_tags_de_{}", field_ident);
+        let unnamed = match var.fields {
+            syn::Fields::Unnamed(ref u) => u,
+            _ => {
+                result.push(
+                    quote! {
+                        compile_error!("Need NewType(Type) variant");
+                    }
+                    .into(),
+                );
+                continue;
+            }
+        };
+        let first_field = match unnamed.unnamed.first() {
+            None => {
+                result.push(
+                    quote! {
+                        compile_error!("Need NewType(Type) variant");
+                    }
+                    .into(),
+                );
+                continue;
+            }
+            Some(field) => field,
+        };
+        let inner_type = &first_field.ty;
+        result.extend(
+            [quote! {
+                fn #ser_func<S>(val: &#inner_type, serializer: S)
+                    -> Result<S::Ok, S::Error>
+                    where
+                        S: serde::ser::Serializer
+                {
+                    use serde::ser::SerializeStruct;
+                    let mut sv
+                        = serializer.serialize_struct(#enum_ident, 1)?;
+                    sv.serialize_field(#field_ident, val)?;
+                    sv.end()
+                }
+                fn #de_func<'de, D>(deserializer: D) -> Result<#inner_type, D::Error>
+                where
+                    D: serde::de::Deserializer<'de>,
+                {
+                    use tagged_visitor::TaggedVisitor;
+                    use serde::de::Visitor;
 
-    mod tagged_i32 {
-        use serde::{Deserializer, Serializer};
-
-        use crate::{tagged_ser, tagged_de};
-
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<i32, D::Error>
-            where
-                D: Deserializer<'de>
-        {
-            tagged_de(deserializer, "TaggedI32", &"tagged_i32")
-        }
-
-        pub fn serialize<S>(val: &i32, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: Serializer
-        {
-            tagged_ser(val, serializer, "TaggedI32", "tagged_i32")
-        }
-    }
-
-    mod tagged_string {
-        use serde::{Deserializer, Serializer};
-
-        use crate::{tagged_ser, tagged_de};
-
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<String, D::Error>
-            where
-                D: Deserializer<'de>
-        {
-            tagged_de(deserializer, "TaggedString", &"tagged_string")
-        }
-
-        pub fn serialize<S>(val: &String, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: Serializer
-        {
-            tagged_ser(val, serializer, "TaggedString", "tagged_string")
-        }
-    }
-
-    #[test]
-    fn ser_tagged_i32() {
-        assert_eq!(
-            serde_json::to_string(&Enum::TaggedI32(123)).unwrap(),
-            String::from(r#"{"tagged_i32":123}"#)
+                    deserializer.deserialize_struct(
+                        #enum_ident,
+                        std::slice::from_ref(&#field_ident),
+                        TaggedVisitor::new(#field_ident)
+                    )
+                }
+            }]
+            .iter()
+            .cloned(),
         );
+        var.attrs.push(parse_quote! {
+            #[serde(serialize_with = #ser_func_str)]
+        });
+        var.attrs.push(parse_quote! {
+            #[serde(deserialize_with = #de_func_str)]
+        });
     }
 
-    #[test]
-    fn ser_tagged_string() {
-        assert_eq!(
-            serde_json::to_string(&Enum::TaggedString(String::from("str"))).unwrap(),
-            String::from(r#"{"tagged_string":"str"}"#)
-        );
-    }
-
-    #[test]
-    fn ser_untagged() {
-        assert_eq!(
-            serde_json::to_string(&Enum::Untagged { x: 42, y: 17 }).unwrap(),
-            String::from(r#"{"x":42,"y":17}"#)
-        );
-    }
-
-    #[test]
-    fn de_tagged_i32() {
-        assert_eq!(
-            serde_json::from_str::<Enum>(r#"{"tagged_i32":123}"#).unwrap(),
-            Enum::TaggedI32(123)
-        );
-    }
-
-    #[test]
-    fn de_tagged_string() {
-        assert_eq!(
-            serde_json::from_str::<Enum>(r#"{"tagged_string":"str"}"#).unwrap(),
-            Enum::TaggedString(String::from("str"))
-        );
-    }
-
-    #[test]
-    fn de_untagged() {
-        assert_eq!(
-            serde_json::from_str::<Enum>(r#"{"x":42,"y":17}"#).unwrap(),
-            Enum::Untagged { x: 42, y: 17 }
-        );
-    }
+    let mut stream = item.into_token_stream();
+    stream.extend(result.iter().cloned());
+    // eprintln!("{}", stream);
+    stream.into()
 }

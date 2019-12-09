@@ -6,9 +6,16 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+proc-macro = true
+
 [dependencies]
-# NOTE: unfortunately, I can't find a way to enable derive only for tests :(
-serde = { version = "1.0.101", features = ["derive"] }
+serde = { version = "1.0" }
+syn = { version = "1.0", features = ["full"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+tagged_visitor = { path = "tagged_visitor" }
 
 [dev-dependencies]
-serde_json = "1.0.41"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
