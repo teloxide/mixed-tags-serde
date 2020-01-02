@@ -1,99 +1,52 @@
-extern crate proc_macro;
+use std::marker::PhantomData;
 
-use quote::{format_ident, quote, ToTokens};
-use syn::{parse_macro_input, parse_quote, ItemEnum};
+use serde::{
+    de::{Error, MapAccess, Visitor},
+    Deserialize,
+};
 
-use proc_macro::TokenStream;
-use proc_macro2;
+pub use mixed_tags_serde_impl::*;
 
-#[proc_macro_attribute]
-pub fn mixed_tags(_attrs: TokenStream, item: TokenStream) -> TokenStream {
-    let mut item = parse_macro_input!(item as ItemEnum);
-    let mut result = Vec::<proc_macro2::TokenStream>::new();
-    let enum_ident = item.ident.to_string();
+pub struct TaggedVisitor<T> {
+    tag: &'static str,
+    marker: PhantomData<T>,
+}
 
-    let tagged_filter = |attr: &syn::Attribute|
-        /*attr.style == syn::AttrStyle::Outer &&*/
-        attr.path.segments.len() == 1
-        && attr.path.segments
-                .first().unwrap()
-                .ident.to_string()
-            == "tagged";
-    for var in item.variants.iter_mut() {
-        if !var.attrs.iter().any(tagged_filter) {
-            continue;
+impl<T> TaggedVisitor<T> {
+    pub fn new(tag: &'static str) -> Self {
+        Self {
+            tag,
+            marker: PhantomData::<T>,
         }
-        var.attrs.retain(|attr| !tagged_filter(attr));
-        let field_ident = var.ident.to_string();
-        let ser_func = format_ident!("mixed_tags_ser_{}", field_ident);
-        let ser_func_str = format!("mixed_tags_ser_{}", field_ident);
-        let de_func = format_ident!("mixed_tags_de_{}", field_ident);
-        let de_func_str = format!("mixed_tags_de_{}", field_ident);
-        let unnamed = match var.fields {
-            syn::Fields::Unnamed(ref u) => u,
-            _ => {
-                result.push(
-                    quote! {
-                        compile_error!("Need NewType(Type) variant");
-                    }
-                    .into(),
-                );
-                continue;
-            }
-        };
-        let first_field = match unnamed.unnamed.first() {
-            None => {
-                result.push(
-                    quote! {
-                        compile_error!("Need NewType(Type) variant");
-                    }
-                    .into(),
-                );
-                continue;
-            }
-            Some(field) => field,
-        };
-        let inner_type = &first_field.ty;
-        result.extend(
-            [quote! {
-                fn #ser_func<S>(val: &#inner_type, serializer: S)
-                    -> Result<S::Ok, S::Error>
-                    where
-                        S: serde::ser::Serializer
-                {
-                    use serde::ser::SerializeStruct;
-                    let mut sv
-                        = serializer.serialize_struct(#enum_ident, 1)?;
-                    sv.serialize_field(#field_ident, val)?;
-                    sv.end()
-                }
-                fn #de_func<'de, D>(deserializer: D) -> Result<#inner_type, D::Error>
-                where
-                    D: serde::de::Deserializer<'de>,
-                {
-                    use tagged_visitor::TaggedVisitor;
-                    use serde::de::Visitor;
+    }
+}
 
-                    deserializer.deserialize_struct(
-                        #enum_ident,
-                        std::slice::from_ref(&#field_ident),
-                        TaggedVisitor::new(#field_ident)
-                    )
-                }
-            }]
-            .iter()
-            .cloned(),
-        );
-        var.attrs.push(parse_quote! {
-            #[serde(serialize_with = #ser_func_str)]
-        });
-        var.attrs.push(parse_quote! {
-            #[serde(deserialize_with = #de_func_str)]
-        });
+impl<'de, T> Visitor<'de> for TaggedVisitor<T>
+where
+    T: Deserialize<'de>,
+{
+    type Value = T;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "") // TODO: what we expect?
     }
 
-    let mut stream = item.into_token_stream();
-    stream.extend(result.iter().cloned());
-    // eprintln!("{}", stream);
-    stream.into()
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let entry = map.next_entry::<&'de str, T>()?.ok_or_else(|| {
+            let ty = std::any::type_name::<T>();
+            let message = format!(
+                r#"pair of key "{tag}" and value of type {T}"#, // TODO: better message?
+                tag = self.tag,
+                T = ty
+            );
+            A::Error::custom(message)
+        })?;
+
+        let (tag, value) = entry;
+        if tag == self.tag {
+            Ok(value)
+        } else {
+            Err(A::Error::custom(format!(r#"key "{tag}""#, tag = self.tag)))
+        }
+    }
 }
